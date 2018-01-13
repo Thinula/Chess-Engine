@@ -1,21 +1,21 @@
 import java.util.ArrayList;
-import javafx.util.Pair;
+import java.lang.Math;
 import java.util.Random;
 import java.util.Hashtable;
 import java.util.Enumeration; // apparently I might need this for hashTable?
 
 class Transpose
 {    
-    private int score;
+    private double score;
     private int depth;
     
-    public Transpose(int score, int depth)
+    public Transpose(double score, int depth)
     {
         this.score = score;
         this.depth = depth;
     }
 
-    public int getScore()
+    public double getScore()
     {
         return score;
     }
@@ -31,9 +31,14 @@ public class AI
     private Board board;
     private char col;
     private Hashtable<Board,Transpose> posEvals;
-    private final int winValue = Integer.MAX_VALUE;
-    private final int loseValue = Integer.MIN_VALUE;
-    private final int drawValue = 0;
+    private double[] inputLayer;
+    private double[][] inputWeights;
+    private double[] threshold;
+    private double[] hiddenLayer;
+    private double[] hiddenWeights;
+    private final double winValue = Integer.MAX_VALUE;
+    private final double loseValue = Integer.MIN_VALUE;
+    private final double drawValue = 0;
     private final int maxDepth = 5;
 
     public AI(Board b, char c)
@@ -41,6 +46,27 @@ public class AI
         board = b;
         col = c; 
         posEvals = new Hashtable<Board,Transpose>(0);
+        inputLayer = new double[384];
+        hiddenLayer = new double[256];
+        threshold = new double[256];
+        inputWeights = new double[384][256];
+        hiddenWeights = new double[256];
+        
+        Random random = new Random();
+        
+        for (int i = 0; i < 384; i++)
+        {
+            for (int j = 0; j < 256; j++)
+            {
+                inputWeights[i][j] = random.nextGaussian();
+            }
+        }
+        
+        for (int i = 0; i < 256; i++)
+        {
+            threshold[i] = random.nextGaussian();
+            hiddenWeights[i] = random.nextGaussian();
+        }
     }
 
     public void doMove(Board chess, Move m)
@@ -90,62 +116,15 @@ public class AI
             return 'W';
     }
     
-    private int material (Piece piece)
+    private double sigmoid(double z)
     {
-        if (piece instanceof Pawn)
-            return 100;
-        else if (piece instanceof Knight)
-            return 320;
-        else if (piece instanceof Bishop)
-            return 333;
-        else if (piece instanceof Rook)
-            return 510;
-        else if (piece instanceof Queen)
-            return 880;
-        else if (piece instanceof King) 
-            return 20000;
-        else // if this null
-            return 0;
-    }
-    
-    private int material (Board chess, char colour)
-    {
-        int total = 0;
-        Piece piece;
-        
-        for (int i = 0; i < 8; i++)
-        {
-            for (int j = 0; j < 8; j++)
-            { 
-                if (chess.hasPiece(i,j))
-                { 
-                    piece = chess.getPiece(i,j);
-                
-                    if (piece.getColour() == colour)
-                    {
-                        total += material(piece);
-                    }
-                    else
-                    {
-                        total -= material(piece);
-                    }
-                }
-            }
-        }   
-        
-        return total;
-    }
-    
-    private int mobility (Board chess, char colour)
-    {
-        ArrayList<Move> moves = getAllMoves(chess,colour);
-        return moves.size();
+        return 1/(1+Math.exp(-z));
     }
     
     private Move getBestMove(Board chess)
     {
-        int score;
-        int bestScore = loseValue;
+        double score;
+        double bestScore = loseValue;
         Move bestMove = new Move();
         Position oldPos = chess.getPosition();
         
@@ -163,14 +142,88 @@ public class AI
         return bestMove;
     }
     
-    private int evaluate (Board chess, int depth, int alpha, int beta)
+    // evaluation function
+    private double evaluate (Board chess, char colour)
     {
-        int score;
+        // first layer: if board[i][j] is a piece, 8*i+j]
+        inputLayer = new double[384];
+        
+        for (int i = 0; i < 8; i++)
+        {
+            for (int j = 0; j < 8; j++)
+            {
+                Piece piece = board.getPiece(i,j);
+                int product = 1;
+                if (piece.getColour() != colour)
+                {
+                    product = -1;
+                }
+                
+                if (piece instanceof Pawn)
+                {
+                    inputLayer[6*(8*i+j)] = product;
+                }                
+                else if (piece instanceof Knight)
+                {
+                    inputLayer[6*(8*i+j)+1] = product;
+                }           
+                else if (piece instanceof Bishop)
+                {
+                    inputLayer[6*(8*i+j)+2] = product;
+                }
+                else if (piece instanceof Rook)
+                {
+                    inputLayer[6*(8*i+j)+3] = product;
+                }
+                else if (piece instanceof Queen)
+                {
+                    inputLayer[6*(8*i+j)+4] = product;
+                }
+                else if (piece instanceof King)
+                {
+                    inputLayer[6*(8*i+j)+5] = product;
+                }
+            }
+        }
+        
+        for (int i = 0; i < 256; i++)
+        {
+            hiddenLayer[i] = 0;
+            for (int j = 0; j < 384; j++)
+            {
+                hiddenLayer[i] += inputWeights[i][j]*inputLayer[j];
+                hiddenLayer[i] = sigmoid(hiddenLayer[i]);
+                
+                if (hiddenLayer[i] > threshold[i])
+                {
+                    hiddenLayer[i] = 1;
+                }
+                else
+                {
+                    hiddenLayer[i] = 0;
+                }
+            }
+        }
+        
+        double output = 0;
+        
+        for (int i = 0; i < 256; i++)
+        {
+            output += hiddenLayer[i]*hiddenWeights[i];
+        }
+        
+        return sigmoid(output);
+    }
+    
+    // alpha beta pruning
+    private double evaluate (Board chess, int depth, double alpha, double beta)
+    {
+        double score;
         char colour = depth % 2 == 0 ? oppColour(col) : col;
         
         if (depth == maxDepth || chess.endGame())
         {
-            return material(chess,colour);
+            return evaluate(chess,colour);
         }
         
         ArrayList<Move> moves = getAllMoves(chess,colour);
@@ -244,14 +297,14 @@ public class AI
     }
     
     // Evaluate board using minimax
-    private int evaluate (Board chess, int depth) 
+    private double evaluate (Board chess, int depth) 
     {
-        int score,bestScore;
+        double score,bestScore;
         char colour = depth % 2 == 0 ? oppColour(col) : col;
         
         if (depth == maxDepth || chess.endGame())
         {
-            return material(chess,colour);            
+            return evaluate(chess,colour);            
         }
                 
         ArrayList<Move> moves = getAllMoves(chess,colour);
